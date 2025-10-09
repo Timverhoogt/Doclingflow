@@ -1,0 +1,136 @@
+version: '3.8'
+
+services:
+  # PostgreSQL - Metadata Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: doclingflow-postgres
+    environment:
+      POSTGRES_DB: doclingflow
+      POSTGRES_USER: doclingflow
+      POSTGRES_PASSWORD: doclingflow_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U doclingflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - doclingflow-network
+
+  # Qdrant - Vector Database
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: doclingflow-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      QDRANT__SERVICE__GRPC_PORT: 6334
+    networks:
+      - doclingflow-network
+
+  # Redis - Task Queue & Cache
+  redis:
+    image: redis:7-alpine
+    container_name: doclingflow-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - doclingflow-network
+
+  # Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: doclingflow-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - ./data:/data
+      - ./config:/config
+    environment:
+      DATABASE_URL: postgresql://doclingflow:doclingflow_password@postgres:5432/doclingflow
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: 6333
+      REDIS_URL: redis://redis:6379/0
+      PYTHONUNBUFFERED: 1
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+    networks:
+      - doclingflow-network
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # Celery Worker - Background Processing
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: doclingflow-worker
+    volumes:
+      - ./backend:/app
+      - ./data:/data
+      - ./config:/config
+    environment:
+      DATABASE_URL: postgresql://doclingflow:doclingflow_password@postgres:5432/doclingflow
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: 6333
+      REDIS_URL: redis://redis:6379/0
+      PYTHONUNBUFFERED: 1
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+    networks:
+      - doclingflow-network
+    command: celery -A tasks.celery_app worker --loglevel=info --concurrency=2
+
+  # Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: doclingflow-frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    depends_on:
+      - backend
+    networks:
+      - doclingflow-network
+
+volumes:
+  postgres_data:
+  qdrant_data:
+  redis_data:
+
+networks:
+  doclingflow-network:
+    driver: bridge
