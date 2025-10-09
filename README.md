@@ -58,10 +58,10 @@ docker-compose up -d
 ```
 
 This will start all services:
-- Frontend: http://localhost:3000
-- Backend API: http://localhost:8000
-- API Docs: http://localhost:8000/docs
-- Qdrant Dashboard: http://localhost:6333/dashboard
+- Frontend: http://localhost:2001
+- Backend API: http://localhost:2000
+- API Docs: http://localhost:2000/docs
+- Qdrant Dashboard: http://localhost:2333/dashboard
 
 ### Usage
 
@@ -72,7 +72,7 @@ cp your-document.pdf data/inbox/
 The file watcher will automatically detect and process the document.
 
 **Option 2: Upload via Web UI**
-- Navigate to http://localhost:3000
+- Navigate to http://localhost:2001
 - Use the upload interface to select files or folders
 - Monitor processing status in real-time
 
@@ -160,7 +160,7 @@ docker-compose ps
 ```
 
 ### Check Processing Queue
-- Navigate to http://localhost:3000/dashboard
+- Navigate to http://localhost:2001/dashboard
 - View queue status, processing statistics, and recent documents
 
 ### Database Access
@@ -171,8 +171,8 @@ docker-compose exec postgres psql -U doclingflow -d doclingflow
 ```
 
 **Qdrant:**
-- Dashboard: http://localhost:6333/dashboard
-- API: http://localhost:6333
+- Dashboard: http://localhost:2333/dashboard
+- API: http://localhost:2333
 
 **Redis:**
 ```bash

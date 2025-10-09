@@ -23,7 +23,7 @@ COPY . .
 RUN mkdir -p /data/inbox /data/processed /data/failed /data/archive
 
 # Expose port
-EXPOSE 8000
+EXPOSE 2000
 
 # Default command (can be overridden in docker-compose)
-CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "2000"]
