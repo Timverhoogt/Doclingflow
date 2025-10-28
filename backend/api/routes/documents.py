@@ -4,11 +4,16 @@ Document management API endpoints.
 
 from typing import List, Optional
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
+import os
+import hashlib
+import shutil
+from pathlib import Path
 
 from backend.core.database import get_db
+from backend.core.config import get_settings
 from backend.api.dependencies import (
     get_pagination, Pagination,
     get_document_or_404, get_active_document_or_404
@@ -17,11 +22,108 @@ from backend.schemas.models import Document, DocumentCategory, DocumentChunk
 from backend.schemas.document import (
     DocumentResponse, DocumentListResponse,
     DocumentUpdate, DocumentStatsResponse,
-    DocumentChunkResponse
+    DocumentChunkResponse, DocumentUploadResponse
 )
+from backend.tasks.ingestion import process_document_task
 
 
 router = APIRouter()
+
+
+@router.post("/upload", response_model=DocumentUploadResponse)
+async def upload_document(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    """
+    Upload a document for processing.
+
+    - **file**: The document file to upload
+    - Supported formats: PDF, DOCX, XLSX, PPTX
+    - File will be automatically processed and indexed
+    """
+    settings = get_settings()
+    
+    # Validate file type
+    file_extension = Path(file.filename).suffix.lower()
+    if file_extension not in settings.processing.supported_formats:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported file type: {file_extension}. Supported: {settings.processing.supported_formats}"
+        )
+    
+    # Check file size
+    if file.size and file.size > settings.processing.max_file_size:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File too large. Maximum size: {settings.processing.max_file_size} bytes"
+        )
+    
+    # Create inbox directory if it doesn't exist
+    inbox_path = Path(settings.data.inbox_path)
+    inbox_path.mkdir(parents=True, exist_ok=True)
+    
+    # Generate unique filename
+    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    safe_filename = f"{timestamp}_{file.filename}"
+    file_path = inbox_path / safe_filename
+    
+    try:
+        # Save file to inbox
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        # Calculate file hash
+        file_hash = hashlib.sha256()
+        with open(file_path, "rb") as f:
+            for chunk in iter(lambda: f.read(4096), b""):
+                file_hash.update(chunk)
+        file_hash_str = file_hash.hexdigest()
+        
+        # Check if document already exists
+        existing_doc = db.query(Document).filter(Document.file_hash == file_hash_str).first()
+        if existing_doc:
+            # Remove the uploaded file since it's a duplicate
+            os.remove(file_path)
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Document with this content already exists (ID: {existing_doc.id})"
+            )
+        
+        # Create document record
+        document = Document(
+            filename=file.filename,
+            file_type=file_extension[1:],  # Remove the dot
+            original_path=str(file_path),
+            file_size=file_path.stat().st_size,
+            file_hash=file_hash_str,
+            uploaded_at=datetime.utcnow(),
+            category=DocumentCategory.UNCATEGORIZED
+        )
+        
+        db.add(document)
+        db.commit()
+        db.refresh(document)
+        
+        # Queue processing task
+        task = process_document_task.delay(document.id)
+        
+        return DocumentUploadResponse(
+            document_id=document.id,
+            filename=document.filename,
+            file_size=document.file_size,
+            processing_job_id=task.id,
+            message="Document uploaded successfully and queued for processing"
+        )
+        
+    except Exception as e:
+        # Clean up file if something went wrong
+        if file_path.exists():
+            os.remove(file_path)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to upload document: {str(e)}"
+        )
 
 
 @router.get("", response_model=DocumentListResponse)

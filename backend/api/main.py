@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.core.config import get_settings
 from backend.core.database import init_database, close_database
 from backend.core.qdrant_client import get_qdrant_manager, close_qdrant
-from backend.api.routes import health, documents
+from backend.api.routes import health, documents, search, analytics, settings, jobs
 
 
 @asynccontextmanager
@@ -68,6 +68,10 @@ def create_app() -> FastAPI:
     # Include routers
     app.include_router(health.router, prefix="/api", tags=["Health"])
     app.include_router(documents.router, prefix="/api/documents", tags=["Documents"])
+    app.include_router(search.router, prefix="/api/search", tags=["Search"])
+    app.include_router(analytics.router, prefix="/api/analytics", tags=["Analytics"])
+    app.include_router(settings.router, prefix="/api/settings", tags=["Settings"])
+    app.include_router(jobs.router, prefix="/api/jobs", tags=["Jobs"])
 
     return app
 
